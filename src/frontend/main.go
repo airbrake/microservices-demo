@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"cloud.google.com/go/profiler"
 	"contrib.go.opencensus.io/exporter/jaeger"
 	"contrib.go.opencensus.io/exporter/stackdriver"
+	"github.com/airbrake/gobrake/v5"
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -53,6 +55,8 @@ var (
 		"JPY": true,
 		"GBP": true,
 		"TRY": true}
+
+	Airbrake *gobrake.Notifier
 )
 
 type ctxKeySessionID struct{}
@@ -78,9 +82,18 @@ type frontendServer struct {
 
 	adSvcAddr string
 	adSvcConn *grpc.ClientConn
+
+	abProjectID   int64
+	abProjectKey  string
+	abEnvironment string
 }
 
 func main() {
+	var err error
+
+	defer Airbrake.Close()
+	defer Airbrake.NotifyOnPanic()
+
 	ctx := context.Background()
 	log := logrus.New()
 	log.Level = logrus.DebugLevel
@@ -121,6 +134,21 @@ func main() {
 	mustMapEnv(&svc.checkoutSvcAddr, "CHECKOUT_SERVICE_ADDR")
 	mustMapEnv(&svc.shippingSvcAddr, "SHIPPING_SERVICE_ADDR")
 	mustMapEnv(&svc.adSvcAddr, "AD_SERVICE_ADDR")
+
+	// Airbrake project information
+	var projIDStr string
+	mustMapEnv(&projIDStr, "AB_PROJECT_ID")
+	if svc.abProjectID, err = strconv.ParseInt(projIDStr, 10, 64); err != nil {
+		panic(fmt.Sprintf("Error converting Airbrake Project id: %s", err))
+	}
+	mustMapEnv(&svc.abProjectKey, "AB_PROJECT_KEY")
+	mustMapEnv(&svc.abEnvironment, "AB_ENV")
+
+	Airbrake = gobrake.NewNotifierWithOptions(&gobrake.NotifierOptions{
+		ProjectId:   svc.abProjectID,
+		ProjectKey:  svc.abProjectKey,
+		Environment: svc.abEnvironment,
+	})
 
 	mustConnGRPC(ctx, &svc.currencySvcConn, svc.currencySvcAddr)
 	mustConnGRPC(ctx, &svc.productCatalogSvcConn, svc.productCatalogSvcAddr)

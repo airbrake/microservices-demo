@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/airbrake/gobrake/v5"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -58,6 +59,8 @@ func (lh *logHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID, _ := uuid.NewRandom()
 	ctx = context.WithValue(ctx, ctxKeyRequestID{}, requestID.String())
 
+	// hijack log with additional AB APM
+	ctx, routeMetric := gobrake.NewRouteMetric(ctx, r.Method, r.URL.Path)
 	start := time.Now()
 	rr := &responseRecorder{w: w}
 	log := lh.log.WithFields(logrus.Fields{
@@ -74,6 +77,8 @@ func (lh *logHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"http.resp.took_ms": int64(time.Since(start) / time.Millisecond),
 			"http.resp.status":  rr.status,
 			"http.resp.bytes":   rr.b}).Debugf("request complete")
+		routeMetric.StatusCode = rr.status
+		Airbrake.Routes.Notify(ctx, routeMetric)
 	}()
 
 	ctx = context.WithValue(ctx, ctxKeyLog{}, log)
