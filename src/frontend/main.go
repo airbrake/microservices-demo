@@ -95,6 +95,7 @@ func main() {
 	defer Airbrake.NotifyOnPanic()
 
 	ctx := context.Background()
+
 	log := logrus.New()
 	log.Level = logrus.DebugLevel
 	log.Formatter = &logrus.JSONFormatter{
@@ -149,6 +150,7 @@ func main() {
 		ProjectKey:  svc.abProjectKey,
 		Environment: svc.abEnvironment,
 	})
+	log.AddHook(abLogrusInit(svc.abProjectID, svc.abProjectKey, svc.abEnvironment))
 
 	mustConnGRPC(ctx, &svc.currencySvcConn, svc.currencySvcAddr)
 	mustConnGRPC(ctx, &svc.productCatalogSvcConn, svc.productCatalogSvcAddr)
