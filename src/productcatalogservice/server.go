@@ -36,6 +36,7 @@ import (
 	"contrib.go.opencensus.io/exporter/stackdriver"
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/sirupsen/logrus"
+
 	//  "go.opencensus.io/exporter/jaeger"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/stats/view"
@@ -76,17 +77,17 @@ func init() {
 
 func main() {
 	if os.Getenv("DISABLE_TRACING") == "" {
-		log.Info("Tracing enabled.")
+		log.Warn("Tracing enabled.")
 		go initTracing()
 	} else {
-		log.Info("Tracing disabled.")
+		log.Warn("Tracing disabled.")
 	}
 
 	if os.Getenv("DISABLE_PROFILER") == "" {
-		log.Info("Profiling enabled.")
+		log.Warn("Profiling enabled.")
 		go initProfiling("productcatalogservice", "1.0.0")
 	} else {
-		log.Info("Profiling disabled.")
+		log.Warn("Profiling disabled.")
 	}
 
 	flag.Parse()
@@ -102,6 +103,10 @@ func main() {
 	} else {
 		extraLatency = time.Duration(0)
 	}
+
+	// Airbrake init and hooks
+	hook := abLogrusInit(airbrakeInit())
+	log.AddHook(hook)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
@@ -134,10 +139,10 @@ func run(port string) string {
 	}
 	var srv *grpc.Server
 	if os.Getenv("DISABLE_STATS") == "" {
-		log.Info("Stats enabled.")
+		log.Warn("Stats enabled.")
 		srv = grpc.NewServer(grpc.StatsHandler(&ocgrpc.ServerHandler{}))
 	} else {
-		log.Info("Stats disabled.")
+		log.Warn("Stats disabled.")
 		srv = grpc.NewServer()
 	}
 
@@ -259,19 +264,27 @@ func parseCatalog() []*pb.Product {
 }
 
 func (p *productCatalog) Check(ctx context.Context, req *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
+	ctx = abJobStart(ctx, "Check")
+	defer abJobEnd(ctx, "Check", nil)
 	return &healthpb.HealthCheckResponse{Status: healthpb.HealthCheckResponse_SERVING}, nil
 }
 
 func (p *productCatalog) Watch(req *healthpb.HealthCheckRequest, ws healthpb.Health_WatchServer) error {
-	return status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
+	err := status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
+	ctx := abJobStart(context.Background(), "Watch")
+	defer abJobEnd(ctx, "Watch", err)
+	return err
 }
 
-func (p *productCatalog) ListProducts(context.Context, *pb.Empty) (*pb.ListProductsResponse, error) {
+func (p *productCatalog) ListProducts(ctx context.Context, _ *pb.Empty) (*pb.ListProductsResponse, error) {
+	ctx = abJobStart(context.Background(), "ListProduct")
+	defer abJobEnd(ctx, "ListProduct", nil)
 	time.Sleep(extraLatency)
 	return &pb.ListProductsResponse{Products: parseCatalog()}, nil
 }
 
 func (p *productCatalog) GetProduct(ctx context.Context, req *pb.GetProductRequest) (*pb.Product, error) {
+	ctx = abJobStart(ctx, "GetProduct")
 	time.Sleep(extraLatency)
 	var found *pb.Product
 	for i := 0; i < len(parseCatalog()); i++ {
@@ -280,12 +293,19 @@ func (p *productCatalog) GetProduct(ctx context.Context, req *pb.GetProductReque
 		}
 	}
 	if found == nil {
-		return nil, status.Errorf(codes.NotFound, "no product with ID %s", req.Id)
+		err := status.Errorf(codes.NotFound, "no product with ID %s", req.Id)
+
+		abJobEnd(ctx, "GetProduct", err)
+		return nil, err
 	}
+
+	abJobEnd(ctx, "GetProduct", nil)
 	return found, nil
 }
 
 func (p *productCatalog) SearchProducts(ctx context.Context, req *pb.SearchProductsRequest) (*pb.SearchProductsResponse, error) {
+	ctx = abJobStart(ctx, "SearchProduct")
+	defer abJobEnd(ctx, "SearchProduct", nil)
 	time.Sleep(extraLatency)
 	// Intepret query as a substring match in name or description.
 	var ps []*pb.Product
