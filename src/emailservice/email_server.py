@@ -35,21 +35,9 @@ from opencensus.ext.grpc import server_interceptor
 from opencensus.common.transports.async_ import AsyncTransport
 from opencensus.trace import samplers
 
-# import googleclouddebugger
-import googlecloudprofiler
+from logger import getPybrakeLogger
+logger = getPybrakeLogger('emailservice-server')
 
-from logger import getJSONLogger
-logger = getJSONLogger('emailservice-server')
-
-# try:
-#     googleclouddebugger.enable(
-#         module='emailserver',
-#         version='1.0.0'
-#     )
-# except:
-#     pass
-
-# Loads confirmation email template from file
 env = Environment(
     loader=FileSystemLoader('templates'),
     autoescape=select_autoescape(['html', 'xml'])
@@ -60,7 +48,7 @@ class BaseEmailService(demo_pb2_grpc.EmailServiceServicer):
   def Check(self, request, context):
     return health_pb2.HealthCheckResponse(
       status=health_pb2.HealthCheckResponse.SERVING)
-  
+
   def Watch(self, request, context):
     return health_pb2.HealthCheckResponse(
       status=health_pb2.HealthCheckResponse.UNIMPLEMENTED)
@@ -198,7 +186,7 @@ if __name__ == '__main__':
       logger.info("Tracing disabled.")
       tracer_interceptor = server_interceptor.OpenCensusServerInterceptor()
   except Exception as e:
-      logger.warn(f"Exception on Cloud Trace setup: {traceback.format_exc()}, tracing disabled.") 
+      logger.warn(f"Exception on Cloud Trace setup: {traceback.format_exc()}, tracing disabled.")
       tracer_interceptor = server_interceptor.OpenCensusServerInterceptor()
-  
+
   start(dummy_mode = True)
