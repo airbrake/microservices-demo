@@ -69,18 +69,24 @@ type checkoutService struct {
 }
 
 func main() {
+	// Airbrake init and hooks
+	hook := abLogrusInit(airbrakeInit())
+	log.AddHook(hook)
+	defer Airbrake.Close()
+	defer Airbrake.NotifyOnPanic()
+
 	if os.Getenv("DISABLE_TRACING") == "" {
-		log.Info("Tracing enabled.")
+		log.Warn("Tracing enabled.")
 		go initTracing()
 	} else {
-		log.Info("Tracing disabled.")
+		log.Warn("Tracing disabled.")
 	}
 
 	if os.Getenv("DISABLE_PROFILER") == "" {
-		log.Info("Profiling enabled.")
+		log.Warn("Profiling enabled.")
 		go initProfiling("checkoutservice", "1.0.0")
 	} else {
-		log.Info("Profiling disabled.")
+		log.Warn("Profiling disabled.")
 	}
 
 	port := listenPort
@@ -96,7 +102,7 @@ func main() {
 	mustMapEnv(&svc.emailSvcAddr, "EMAIL_SERVICE_ADDR")
 	mustMapEnv(&svc.paymentSvcAddr, "PAYMENT_SERVICE_ADDR")
 
-	log.Infof("service config: %+v", svc)
+	log.Warnf("service config: %+v", svc)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
 	if err != nil {
@@ -105,12 +111,13 @@ func main() {
 
 	var srv *grpc.Server
 	if os.Getenv("DISABLE_STATS") == "" {
-		log.Info("Stats enabled.")
+		log.Warn("Stats enabled.")
 		srv = grpc.NewServer(grpc.StatsHandler(&ocgrpc.ServerHandler{}))
 	} else {
-		log.Info("Stats disabled.")
+		log.Warn("Stats disabled.")
 		srv = grpc.NewServer()
 	}
+
 	pb.RegisterCheckoutServiceServer(srv, svc)
 	healthpb.RegisterHealthServer(srv, svc)
 	log.Infof("starting to listen on tcp: %q", lis.Addr().String())
@@ -208,24 +215,34 @@ func mustMapEnv(target *string, envKey string) {
 }
 
 func (cs *checkoutService) Check(ctx context.Context, req *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
+	ctx = abJobStart(ctx, "Check")
+	defer abJobEnd(ctx, "Check", nil)
 	return &healthpb.HealthCheckResponse{Status: healthpb.HealthCheckResponse_SERVING}, nil
 }
 
 func (cs *checkoutService) Watch(req *healthpb.HealthCheckRequest, ws healthpb.Health_WatchServer) error {
-	return status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
+	err := status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
+	ctx := abJobStart(context.Background(), "Watch")
+	defer abJobEnd(ctx, "Watch", err)
+	return err
 }
 
 func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderRequest) (*pb.PlaceOrderResponse, error) {
+	var err error
+	ctx = abJobStart(context.Background(), "PlaceOrder")
+	defer abJobEnd(ctx, "PlaceOrder", err)
 	log.Infof("[PlaceOrder] user_id=%q user_currency=%q", req.UserId, req.UserCurrency)
 
 	orderID, err := uuid.NewUUID()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to generate order uuid")
+		err = status.Errorf(codes.Internal, "failed to generate order uuid")
+		return nil, err
 	}
 
 	prep, err := cs.prepareOrderItemsAndShippingQuoteFromCart(ctx, req.UserId, req.UserCurrency, req.Address)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		err = status.Errorf(codes.Internal, err.Error())
+		return nil, err
 	}
 
 	total := pb.Money{CurrencyCode: req.UserCurrency,
@@ -239,13 +256,15 @@ func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderReq
 
 	txID, err := cs.chargeCard(ctx, &total, req.CreditCard)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to charge card: %+v", err)
+		err = status.Errorf(codes.Internal, "failed to charge card: %+v", err)
+		return nil, err
 	}
 	log.Infof("payment went through (transaction_id: %s)", txID)
 
 	shippingTrackingID, err := cs.shipOrder(ctx, req.Address, prep.cartItems)
 	if err != nil {
-		return nil, status.Errorf(codes.Unavailable, "shipping error: %+v", err)
+		err = status.Errorf(codes.Unavailable, "shipping error: %+v", err)
+		return nil, err
 	}
 
 	_ = cs.emptyUserCart(ctx, req.UserId)
@@ -299,11 +318,16 @@ func (cs *checkoutService) prepareOrderItemsAndShippingQuoteFromCart(ctx context
 }
 
 func (cs *checkoutService) quoteShipping(ctx context.Context, address *pb.Address, items []*pb.CartItem) (*pb.Money, error) {
+	var err error
+	ctx = abJobStart(context.Background(), "quoteShipping")
+	defer abJobEnd(ctx, "quoteShipping", err)
+
 	conn, err := grpc.DialContext(ctx, cs.shippingSvcAddr,
 		grpc.WithInsecure(),
 		grpc.WithStatsHandler(&ocgrpc.ClientHandler{}))
 	if err != nil {
-		return nil, fmt.Errorf("could not connect shipping service: %+v", err)
+		err = fmt.Errorf("could not connect shipping service: %+v", err)
+		return nil, err
 	}
 	defer conn.Close()
 
@@ -312,44 +336,60 @@ func (cs *checkoutService) quoteShipping(ctx context.Context, address *pb.Addres
 			Address: address,
 			Items:   items})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get shipping quote: %+v", err)
+		err = fmt.Errorf("failed to get shipping quote: %+v", err)
+		return nil, err
 	}
 	return shippingQuote.GetCostUsd(), nil
 }
 
 func (cs *checkoutService) getUserCart(ctx context.Context, userID string) ([]*pb.CartItem, error) {
+	var err error
+	ctx = abJobStart(context.Background(), "getUserCart")
+	defer abJobEnd(ctx, "getUserCart", err)
 	conn, err := grpc.DialContext(ctx, cs.cartSvcAddr, grpc.WithInsecure(), grpc.WithStatsHandler(&ocgrpc.ClientHandler{}))
 	if err != nil {
-		return nil, fmt.Errorf("could not connect cart service: %+v", err)
+		err = fmt.Errorf("could not connect cart service: %+v", err)
+		return nil, err
 	}
 	defer conn.Close()
 
 	cart, err := pb.NewCartServiceClient(conn).GetCart(ctx, &pb.GetCartRequest{UserId: userID})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user cart during checkout: %+v", err)
+		err = fmt.Errorf("failed to get user cart during checkout: %+v", err)
+		return nil, err
 	}
 	return cart.GetItems(), nil
 }
 
 func (cs *checkoutService) emptyUserCart(ctx context.Context, userID string) error {
+	var err error
+	ctx = abJobStart(context.Background(), "emptyUserCart")
+	defer abJobEnd(ctx, "emptyUserCart", err)
 	conn, err := grpc.DialContext(ctx, cs.cartSvcAddr, grpc.WithInsecure(), grpc.WithStatsHandler(&ocgrpc.ClientHandler{}))
 	if err != nil {
-		return fmt.Errorf("could not connect cart service: %+v", err)
+		err = fmt.Errorf("could not connect cart service: %+v", err)
+		return err
 	}
 	defer conn.Close()
 
 	if _, err = pb.NewCartServiceClient(conn).EmptyCart(ctx, &pb.EmptyCartRequest{UserId: userID}); err != nil {
-		return fmt.Errorf("failed to empty user cart during checkout: %+v", err)
+		err = fmt.Errorf("failed to empty user cart during checkout: %+v", err)
+		return err
 	}
 	return nil
 }
 
 func (cs *checkoutService) prepOrderItems(ctx context.Context, items []*pb.CartItem, userCurrency string) ([]*pb.OrderItem, error) {
+	var err error
+	ctx = abJobStart(context.Background(), "prepOrderItems")
+	defer abJobEnd(ctx, "prepOrderItems", err)
+
 	out := make([]*pb.OrderItem, len(items))
 
 	conn, err := grpc.DialContext(ctx, cs.productCatalogSvcAddr, grpc.WithInsecure(), grpc.WithStatsHandler(&ocgrpc.ClientHandler{}))
 	if err != nil {
-		return nil, fmt.Errorf("could not connect product catalog service: %+v", err)
+		err = fmt.Errorf("could not connect product catalog service: %+v", err)
+		return nil, err
 	}
 	defer conn.Close()
 	cl := pb.NewProductCatalogServiceClient(conn)
@@ -357,11 +397,13 @@ func (cs *checkoutService) prepOrderItems(ctx context.Context, items []*pb.CartI
 	for i, item := range items {
 		product, err := cl.GetProduct(ctx, &pb.GetProductRequest{Id: item.GetProductId()})
 		if err != nil {
-			return nil, fmt.Errorf("failed to get product #%q", item.GetProductId())
+			err = fmt.Errorf("failed to get product #%q", item.GetProductId())
+			return nil, err
 		}
 		price, err := cs.convertCurrency(ctx, product.GetPriceUsd(), userCurrency)
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert price of %q to %s", item.GetProductId(), userCurrency)
+			err = fmt.Errorf("failed to convert price of %q to %s", item.GetProductId(), userCurrency)
+			return nil, err
 		}
 		out[i] = &pb.OrderItem{
 			Item: item,
@@ -371,24 +413,35 @@ func (cs *checkoutService) prepOrderItems(ctx context.Context, items []*pb.CartI
 }
 
 func (cs *checkoutService) convertCurrency(ctx context.Context, from *pb.Money, toCurrency string) (*pb.Money, error) {
+	var err error
+	ctx = abJobStart(context.Background(), "convertCurrency")
+	defer abJobEnd(ctx, "convertCurrency", err)
+
 	conn, err := grpc.DialContext(ctx, cs.currencySvcAddr, grpc.WithInsecure(), grpc.WithStatsHandler(&ocgrpc.ClientHandler{}))
 	if err != nil {
-		return nil, fmt.Errorf("could not connect currency service: %+v", err)
+		err = fmt.Errorf("could not connect currency service: %+v", err)
+		return nil, err
 	}
 	defer conn.Close()
 	result, err := pb.NewCurrencyServiceClient(conn).Convert(context.TODO(), &pb.CurrencyConversionRequest{
 		From:   from,
 		ToCode: toCurrency})
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert currency: %+v", err)
+		err = fmt.Errorf("failed to convert currency: %+v", err)
+		return nil, err
 	}
 	return result, err
 }
 
 func (cs *checkoutService) chargeCard(ctx context.Context, amount *pb.Money, paymentInfo *pb.CreditCardInfo) (string, error) {
+	var err error
+	ctx = abJobStart(context.Background(), "chargeCard")
+	defer abJobEnd(ctx, "chargeCard", err)
+
 	conn, err := grpc.DialContext(ctx, cs.paymentSvcAddr, grpc.WithInsecure(), grpc.WithStatsHandler(&ocgrpc.ClientHandler{}))
 	if err != nil {
-		return "", fmt.Errorf("failed to connect payment service: %+v", err)
+		err = fmt.Errorf("failed to connect payment service: %+v", err)
+		return "", err
 	}
 	defer conn.Close()
 
@@ -396,15 +449,20 @@ func (cs *checkoutService) chargeCard(ctx context.Context, amount *pb.Money, pay
 		Amount:     amount,
 		CreditCard: paymentInfo})
 	if err != nil {
-		return "", fmt.Errorf("could not charge the card: %+v", err)
+		err = fmt.Errorf("could not charge the card: %+v", err)
+		return "", err
 	}
 	return paymentResp.GetTransactionId(), nil
 }
 
 func (cs *checkoutService) sendOrderConfirmation(ctx context.Context, email string, order *pb.OrderResult) error {
+	var err error
+	ctx = abJobStart(context.Background(), "sendOrderConfirmation")
+	defer abJobEnd(ctx, "sendOrderConfirmation", err)
 	conn, err := grpc.DialContext(ctx, cs.emailSvcAddr, grpc.WithInsecure(), grpc.WithStatsHandler(&ocgrpc.ClientHandler{}))
 	if err != nil {
-		return fmt.Errorf("failed to connect email service: %+v", err)
+		err = fmt.Errorf("failed to connect email service: %+v", err)
+		return err
 	}
 	defer conn.Close()
 	_, err = pb.NewEmailServiceClient(conn).SendOrderConfirmation(ctx, &pb.SendOrderConfirmationRequest{
@@ -414,16 +472,21 @@ func (cs *checkoutService) sendOrderConfirmation(ctx context.Context, email stri
 }
 
 func (cs *checkoutService) shipOrder(ctx context.Context, address *pb.Address, items []*pb.CartItem) (string, error) {
+	var err error
+	ctx = abJobStart(context.Background(), "shipOrder")
+	defer abJobEnd(ctx, "shipOrder", err)
 	conn, err := grpc.DialContext(ctx, cs.shippingSvcAddr, grpc.WithInsecure(), grpc.WithStatsHandler(&ocgrpc.ClientHandler{}))
 	if err != nil {
-		return "", fmt.Errorf("failed to connect email service: %+v", err)
+		err = fmt.Errorf("failed to connect email service: %+v", err)
+		return "", err
 	}
 	defer conn.Close()
 	resp, err := pb.NewShippingServiceClient(conn).ShipOrder(ctx, &pb.ShipOrderRequest{
 		Address: address,
 		Items:   items})
 	if err != nil {
-		return "", fmt.Errorf("shipment failed: %+v", err)
+		err = fmt.Errorf("shipment failed: %+v", err)
+		return "", err
 	}
 	return resp.GetTrackingId(), nil
 }
