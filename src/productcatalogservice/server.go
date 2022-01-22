@@ -76,6 +76,12 @@ func init() {
 }
 
 func main() {
+	// Airbrake init and hooks
+	hook := abLogrusInit(airbrakeInit())
+	log.AddHook(hook)
+	defer Airbrake.Close()
+	defer Airbrake.NotifyOnPanic()
+
 	if os.Getenv("DISABLE_TRACING") == "" {
 		log.Warn("Tracing enabled.")
 		go initTracing()
@@ -103,10 +109,6 @@ func main() {
 	} else {
 		extraLatency = time.Duration(0)
 	}
-
-	// Airbrake init and hooks
-	hook := abLogrusInit(airbrakeInit())
-	log.AddHook(hook)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
