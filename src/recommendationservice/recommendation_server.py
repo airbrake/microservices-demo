@@ -20,7 +20,6 @@ import time
 import traceback
 from concurrent import futures
 
-import googleclouddebugger
 import googlecloudprofiler
 from google.auth.exceptions import DefaultCredentialsError
 import grpc
@@ -34,8 +33,8 @@ import demo_pb2_grpc
 from grpc_health.v1 import health_pb2
 from grpc_health.v1 import health_pb2_grpc
 
-from logger import getJSONLogger
-logger = getJSONLogger('recommendationservice-server')
+from logger import getPybrakeLogger
+logger = getPybrakeLogger('recommendationservice-server')
 
 def initStackdriverProfiling():
   project_id = None
@@ -116,9 +115,9 @@ if __name__ == "__main__":
         logger.info("Tracing disabled.")
         tracer_interceptor = server_interceptor.OpenCensusServerInterceptor()
     except Exception as e:
-        logger.warn(f"Exception on Cloud Trace setup: {traceback.format_exc()}, tracing disabled.") 
+        logger.warn(f"Exception on Cloud Trace setup: {traceback.format_exc()}, tracing disabled.")
         tracer_interceptor = server_interceptor.OpenCensusServerInterceptor()
-   
+
     try:
       if "DISABLE_DEBUGGER" in os.environ:
         raise KeyError()

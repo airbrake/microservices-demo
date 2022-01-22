@@ -16,26 +16,19 @@
 
 import logging
 import sys
-from pythonjsonlogger import jsonlogger
 
-# TODO(yoshifumi) this class is duplicated since other Python services are
-# not sharing the modules for logging.
-class CustomJsonFormatter(jsonlogger.JsonFormatter):
-  def add_fields(self, log_record, record, message_dict):
-    super(CustomJsonFormatter, self).add_fields(log_record, record, message_dict)
-    if not log_record.get('timestamp'):
-      log_record['timestamp'] = record.created
-    if log_record.get('severity'):
-      log_record['severity'] = log_record['severity'].upper()
-    else:
-      log_record['severity'] = record.levelname
+import logging
+import pybrake
 
-def getJSONLogger(name):
+notifier = pybrake.Notifier(project_id=os.environ["AB_PROJECT_ID"],
+                            project_key=os.environ["AB_PROJECT_KEY"],
+                            environment=os.environ["AB_ENV"])
+
+airbrake_handler = pybrake.LoggingHandler(notifier=notifier,
+                                          level=logging.ERROR)
+
+def getPybrakeLogger(name):
   logger = logging.getLogger(name)
-  handler = logging.StreamHandler(sys.stdout)
-  formatter = CustomJsonFormatter('(timestamp) (severity) (name) (message)')
-  handler.setFormatter(formatter)
-  logger.addHandler(handler)
+  logger.addHandler(airbrake_handler)
   logger.setLevel(logging.INFO)
-  logger.propagate = False
   return logger

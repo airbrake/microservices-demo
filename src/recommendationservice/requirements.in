@@ -1,5 +1,5 @@
 google-api-core==1.23.0
-google-python-cloud-debugger==2.15
+google-python-cloud-debugger==2.15; sys_platform == 'linux'
 grpcio-health-checking==1.33.2
 grpcio==1.33.2
 opencensus==0.7.11
@@ -8,3 +8,4 @@ opencensus-ext-grpc==0.7.1
 python-json-logger==0.1.11
 google-cloud-profiler==1.1.2
 requests==2.24.0
+pybrake==1.0.4
