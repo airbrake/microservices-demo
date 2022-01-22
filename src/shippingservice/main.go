@@ -58,18 +58,22 @@ func init() {
 }
 
 func main() {
+	// Airbrake init and hooks
+	hook := abLogrusInit(airbrakeInit())
+	log.AddHook(hook)
+
 	if os.Getenv("DISABLE_TRACING") == "" {
-		log.Info("Tracing enabled.")
+		log.Warn("Tracing enabled.")
 		go initTracing()
 	} else {
-		log.Info("Tracing disabled.")
+		log.Warn("Tracing disabled.")
 	}
 
 	if os.Getenv("DISABLE_PROFILER") == "" {
-		log.Info("Profiling enabled.")
+		log.Warn("Profiling enabled.")
 		go initProfiling("shippingservice", "1.0.0")
 	} else {
-		log.Info("Profiling disabled.")
+		log.Warn("Profiling disabled.")
 	}
 
 	port := defaultPort
@@ -85,16 +89,16 @@ func main() {
 
 	var srv *grpc.Server
 	if os.Getenv("DISABLE_STATS") == "" {
-		log.Info("Stats enabled.")
+		log.Warn("Stats enabled.")
 		srv = grpc.NewServer(grpc.StatsHandler(&ocgrpc.ServerHandler{}))
 	} else {
-		log.Info("Stats disabled.")
+		log.Warn("Stats disabled.")
 		srv = grpc.NewServer()
 	}
 	svc := &server{}
 	pb.RegisterShippingServiceServer(srv, svc)
 	healthpb.RegisterHealthServer(srv, svc)
-	log.Infof("Shipping Service listening on port %s", port)
+	log.Warnf("Shipping Service listening on port %s", port)
 
 	// Register reflection service on gRPC server.
 	reflection.Register(srv)
@@ -108,15 +112,23 @@ type server struct{}
 
 // Check is for health checking.
 func (s *server) Check(ctx context.Context, req *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
+	ctx = abJobStart(ctx, "Check")
+	defer abJobEnd(ctx, "Check", nil)
 	return &healthpb.HealthCheckResponse{Status: healthpb.HealthCheckResponse_SERVING}, nil
 }
 
 func (s *server) Watch(req *healthpb.HealthCheckRequest, ws healthpb.Health_WatchServer) error {
-	return status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
+	err := status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
+	ctx := abJobStart(context.Background(), "Watch")
+	abJobEnd(ctx, "Watch", err)
+	return err
 }
 
 // GetQuote produces a shipping quote (cost) in USD.
 func (s *server) GetQuote(ctx context.Context, in *pb.GetQuoteRequest) (*pb.GetQuoteResponse, error) {
+	ctx = abJobStart(ctx, "GetQuote")
+	defer abJobEnd(ctx, "GetQuote", nil)
+
 	log.Info("[GetQuote] received request")
 	defer log.Info("[GetQuote] completed request")
 
@@ -142,6 +154,8 @@ func (s *server) GetQuote(ctx context.Context, in *pb.GetQuoteRequest) (*pb.GetQ
 // ShipOrder mocks that the requested items will be shipped.
 // It supplies a tracking ID for notional lookup of shipment delivery status.
 func (s *server) ShipOrder(ctx context.Context, in *pb.ShipOrderRequest) (*pb.ShipOrderResponse, error) {
+	ctx = abJobStart(ctx, "ShipOrder")
+	defer abJobEnd(ctx, "ShipOrder", nil)
 	log.Info("[ShipOrder] received request")
 	defer log.Info("[ShipOrder] completed request")
 	// 1. Create a Tracking ID
@@ -157,7 +171,7 @@ func (s *server) ShipOrder(ctx context.Context, in *pb.ShipOrderRequest) (*pb.Sh
 func initJaegerTracing() {
 	svcAddr := os.Getenv("JAEGER_SERVICE_ADDR")
 	if svcAddr == "" {
-		log.Info("jaeger initialization disabled.")
+		log.Warn("jaeger initialization disabled.")
 		return
 	}
 
@@ -173,7 +187,7 @@ func initJaegerTracing() {
 		log.Fatal(err)
 	}
 	trace.RegisterExporter(exporter)
-	log.Info("jaeger initialization completed.")
+	log.Warn("jaeger initialization completed.")
 }
 
 func initStats(exporter *stackdriver.Exporter) {
@@ -182,7 +196,7 @@ func initStats(exporter *stackdriver.Exporter) {
 	if err := view.Register(ocgrpc.DefaultServerViews...); err != nil {
 		log.Warn("Error registering default server views")
 	} else {
-		log.Info("Registered default server views")
+		log.Warn("Registered default server views")
 	}
 }
 
@@ -196,14 +210,14 @@ func initStackdriverTracing() {
 		} else {
 			trace.RegisterExporter(exporter)
 			trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})
-			log.Info("registered Stackdriver tracing")
+			log.Warn("registered Stackdriver tracing")
 
 			// Register the views to collect server stats.
 			initStats(exporter)
 			return
 		}
 		d := time.Second * 10 * time.Duration(i)
-		log.Infof("sleeping %v to retry initializing Stackdriver exporter", d)
+		log.Warnf("sleeping %v to retry initializing Stackdriver exporter", d)
 		time.Sleep(d)
 	}
 	log.Warn("could not initialize Stackdriver exporter after retrying, giving up")
@@ -226,11 +240,11 @@ func initProfiling(service, version string) {
 		}); err != nil {
 			log.Warnf("failed to start profiler: %+v", err)
 		} else {
-			log.Info("started Stackdriver profiler")
+			log.Warn("started Stackdriver profiler")
 			return
 		}
 		d := time.Second * 10 * time.Duration(i)
-		log.Infof("sleeping %v to retry initializing Stackdriver profiler", d)
+		log.Warnf("sleeping %v to retry initializing Stackdriver profiler", d)
 		time.Sleep(d)
 	}
 	log.Warn("could not initialize Stackdriver profiler after retrying, giving up")

@@ -6,6 +6,7 @@ require (
 	cloud.google.com/go/profiler v0.1.1
 	contrib.go.opencensus.io/exporter/jaeger v0.2.1
 	contrib.go.opencensus.io/exporter/stackdriver v0.13.10
+	github.com/airbrake/gobrake/v5 v5.2.0
 	github.com/golang/protobuf v1.5.2
 	github.com/sirupsen/logrus v1.8.1
 	go.opencensus.io v0.23.0
@@ -18,6 +19,7 @@ require (
 	cloud.google.com/go/monitoring v1.1.0 // indirect
 	cloud.google.com/go/trace v1.0.0 // indirect
 	github.com/aws/aws-sdk-go v1.37.0 // indirect
+	github.com/caio/go-tdigest v3.1.0+incompatible // indirect
 	github.com/census-instrumentation/opencensus-proto v0.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.1.1 // indirect
 	github.com/cncf/udpa/go v0.0.0-20210930031921-04548b0d99d4 // indirect
@@ -29,6 +31,8 @@ require (
 	github.com/google/pprof v0.0.0-20211008130755-947d60d73cc0 // indirect
 	github.com/googleapis/gax-go/v2 v2.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
+	github.com/jonboulle/clockwork v0.2.2 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/uber/jaeger-client-go v2.25.0+incompatible // indirect
 	golang.org/x/oauth2 v0.0.0-20211104180415-d3ed0bb246c8 // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
