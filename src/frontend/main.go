@@ -19,13 +19,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"cloud.google.com/go/profiler"
 	"contrib.go.opencensus.io/exporter/jaeger"
 	"contrib.go.opencensus.io/exporter/stackdriver"
-	"github.com/airbrake/gobrake/v5"
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -55,8 +53,6 @@ var (
 		"JPY": true,
 		"GBP": true,
 		"TRY": true}
-
-	Airbrake *gobrake.Notifier
 )
 
 type ctxKeySessionID struct{}
@@ -82,22 +78,13 @@ type frontendServer struct {
 
 	adSvcAddr string
 	adSvcConn *grpc.ClientConn
-
-	abProjectID   int64
-	abProjectKey  string
-	abEnvironment string
 }
 
 func main() {
-	var err error
-
-	defer Airbrake.Close()
-	defer Airbrake.NotifyOnPanic()
-
 	ctx := context.Background()
-
 	log := logrus.New()
 	log.Level = logrus.DebugLevel
+	log.ReportCaller = true
 	log.Formatter = &logrus.JSONFormatter{
 		FieldMap: logrus.FieldMap{
 			logrus.FieldKeyTime:  "timestamp",
@@ -107,6 +94,11 @@ func main() {
 		TimestampFormat: time.RFC3339Nano,
 	}
 	log.Out = os.Stdout
+
+	// Airbrake init and hooks
+	log.AddHook(abLogrusInit(airbrakeInit()))
+	defer Airbrake.Close()
+	defer Airbrake.NotifyOnPanic()
 
 	if os.Getenv("DISABLE_TRACING") == "" {
 		log.Info("Tracing enabled.")
@@ -136,21 +128,7 @@ func main() {
 	mustMapEnv(&svc.shippingSvcAddr, "SHIPPING_SERVICE_ADDR")
 	mustMapEnv(&svc.adSvcAddr, "AD_SERVICE_ADDR")
 
-	// Airbrake project information
-	var projIDStr string
-	mustMapEnv(&projIDStr, "AB_PROJECT_ID")
-	if svc.abProjectID, err = strconv.ParseInt(projIDStr, 10, 64); err != nil {
-		panic(fmt.Sprintf("Error converting Airbrake Project id: %s", err))
-	}
-	mustMapEnv(&svc.abProjectKey, "AB_PROJECT_KEY")
-	mustMapEnv(&svc.abEnvironment, "AB_ENV")
-
-	Airbrake = gobrake.NewNotifierWithOptions(&gobrake.NotifierOptions{
-		ProjectId:   svc.abProjectID,
-		ProjectKey:  svc.abProjectKey,
-		Environment: svc.abEnvironment,
-	})
-	log.AddHook(abLogrusInit(svc.abProjectID, svc.abProjectKey, svc.abEnvironment))
+	// Airbrake setup
 
 	mustConnGRPC(ctx, &svc.currencySvcConn, svc.currencySvcAddr)
 	mustConnGRPC(ctx, &svc.productCatalogSvcConn, svc.productCatalogSvcAddr)

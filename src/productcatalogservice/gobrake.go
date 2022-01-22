@@ -59,7 +59,6 @@ type airbrakeHook struct {
 func abLogrusInit(info *ABInfo) *airbrakeHook {
 	var hook airbrakeHook
 
-	logrus.SetReportCaller(true)
 	n := gobrake.NewNotifier(info.ProjectID, info.ProjectKey)
 	n.AddFilter(func(notice *gobrake.Notice) *gobrake.Notice {
 		notice.Context["environment"] = info.Environment
@@ -71,7 +70,7 @@ func abLogrusInit(info *ABInfo) *airbrakeHook {
 
 func (hook airbrakeHook) Fire(entry *logrus.Entry) error {
 	notice := gobrake.NewNotice(entry.Message, nil, -1)
-	if entry.Caller != nil {
+	if entry.HasCaller() {
 		notice.Errors[0].Backtrace = gobrakeBacktrace(entry.Caller)
 	}
 	notice.Params = asParams(entry.Data)

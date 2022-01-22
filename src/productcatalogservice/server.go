@@ -59,6 +59,7 @@ var (
 
 func init() {
 	log = logrus.New()
+	log.ReportCaller = true
 	log.Formatter = &logrus.JSONFormatter{
 		FieldMap: logrus.FieldMap{
 			logrus.FieldKeyTime:  "timestamp",
@@ -77,8 +78,7 @@ func init() {
 
 func main() {
 	// Airbrake init and hooks
-	hook := abLogrusInit(airbrakeInit())
-	log.AddHook(hook)
+	log.AddHook(abLogrusInit(airbrakeInit()))
 	defer Airbrake.Close()
 	defer Airbrake.NotifyOnPanic()
 
