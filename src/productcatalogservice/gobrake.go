@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/airbrake/gobrake/v5"
 	"github.com/sirupsen/logrus"
@@ -19,6 +20,7 @@ type ABInfo struct {
 	ProjectID   int64
 	ProjectKey  string
 	Environment string
+	SrcPath     string
 }
 
 func getAbEnv(target *string, envKey string) {
@@ -42,6 +44,7 @@ func airbrakeInit() *ABInfo {
 	}
 	getAbEnv(&info.ProjectKey, "AB_PROJECT_KEY")
 	getAbEnv(&info.Environment, "AB_ENV")
+	info.SrcPath = os.Getenv("AB_SRCPATH")
 
 	Airbrake = gobrake.NewNotifierWithOptions(&gobrake.NotifierOptions{
 		ProjectId:   info.ProjectID,
@@ -54,6 +57,7 @@ func airbrakeInit() *ABInfo {
 // AB - Logrus integration.
 type airbrakeHook struct {
 	Airbrake *gobrake.Notifier
+	srcPath  string
 }
 
 func abLogrusInit(info *ABInfo) *airbrakeHook {
@@ -65,13 +69,14 @@ func abLogrusInit(info *ABInfo) *airbrakeHook {
 		return notice
 	})
 	hook.Airbrake = n
+	hook.srcPath = info.SrcPath
 	return &hook
 }
 
 func (hook airbrakeHook) Fire(entry *logrus.Entry) error {
 	notice := gobrake.NewNotice(entry.Message, nil, -1)
 	if entry.HasCaller() {
-		notice.Errors[0].Backtrace = gobrakeBacktrace(entry.Caller)
+		notice.Errors[0].Backtrace = hook.gobrakeBacktrace(entry.Caller)
 	}
 	notice.Params = asParams(entry.Data)
 	notice.Context["severity"] = entry.Level.String()
@@ -102,9 +107,12 @@ func (hook airbrakeHook) Levels() []logrus.Level {
 	}
 }
 
-func gobrakeBacktrace(f *runtime.Frame) []gobrake.StackFrame {
+// We mess with the file name due to the way we build in docker, the code is
+// built from /src so we loose the real github repo location. We reinject it
+// by using AB_SRCPATH env var passed in.
+func (hook airbrakeHook) gobrakeBacktrace(f *runtime.Frame) []gobrake.StackFrame {
 	return []gobrake.StackFrame{{
-		File: f.File,
+		File: fmt.Sprintf("%s/%s", hook.srcPath, strings.TrimPrefix(f.File, "/src/")),
 		Line: f.Line,
 		Func: f.Function,
 	}}
